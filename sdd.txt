@@ -1,0 +1,183 @@
+## やりたいこと
+
+1. **GitHub のリポジトリ**に最小限の CDK アプリを置く
+2. **プル／プッシュ → パイプラインが自動実行**
+3. **別環境（例：dev ⇢ test）に同一コードをデプロイして動作確認**
+
+これを **最小構成**で試すための“ひな形”を以下に示します。
+主役は **CDK Pipelines (CodePipeline 版)** ＋ **GitHub ソース** です。
+
+---
+
+### 1. フォルダ構成（Python CDK 版）
+
+```
+my-cdk-app/
+├── app.py               # CDK エントリ
+├── pipeline_stack.py    # CodePipeline 定義
+├── my_app_stage.py      # デプロイ対象（S3 だけ置く例）
+├── requirements.txt
+└── .github/
+    └── workflows/
+        └── cdk-ci.yml   # GitHub Actions（後述）
+```
+
+---
+
+### 2. CDK コード
+
+#### 2-1. `my_app_stage.py` ― テスト対象リソース
+
+```python
+from aws_cdk import (
+    Stage, Stack, aws_s3 as s3, Environment
+)
+from constructs import Construct
+
+class MyAppStack(Stack):
+    def __init__(self, scope: Construct, id: str, **kwargs):
+        super().__init__(scope, id, **kwargs)
+        s3.Bucket(self, "SampleBucket")
+
+class MyAppStage(Stage):
+    def __init__(self, scope: Construct, id: str, *, env: Environment):
+        super().__init__(scope, id, env=env)
+        MyAppStack(self, "AppStack", env=env)
+```
+
+#### 2-2. `pipeline_stack.py` ― パイプライン定義
+
+```python
+from aws_cdk import Stack, Environment
+from aws_cdk.pipelines import (
+    CodePipeline, CodePipelineSource, ShellStep
+)
+from constructs import Construct
+from my_app_stage import MyAppStage
+
+DEV = Environment(account="111111111111", region="ap-northeast-1")
+TEST = Environment(account="222222222222", region="us-east-1")
+
+class PipelineStack(Stack):
+    def __init__(self, scope: Construct, id: str, **kwargs):
+        super().__init__(scope, id, **kwargs)
+
+        pipeline = CodePipeline(
+            self, "Pipeline",
+            synth=ShellStep(
+                "Synth",
+                input=CodePipelineSource.git_hub(
+                    "your-org/my-cdk-app",       # GitHub repo
+                    "main",
+                    connection_arn="arn:aws:codestar-connections:..."  # 1回 GUI で作成
+                ),
+                commands=[
+                    "npm install -g aws-cdk",   # CodeBuild 内で CDK CLI DL
+                    "pip install -r requirements.txt",
+                    "cdk synth"
+                ],
+            ),
+        )
+
+        pipeline.add_stage(MyAppStage(self, "Dev",  env=DEV))
+        pipeline.add_stage(MyAppStage(self, "Test", env=TEST))
+```
+
+> *Stage* を使うことで「同じ Stack を異なるアカウント／リージョンへ複製」できます。([AWS ドキュメント][1])
+
+#### 2-3. `app.py`
+
+```python
+from aws_cdk import App
+from pipeline_stack import PipelineStack
+
+app = App()
+PipelineStack(app, "CdkGhPipeline")
+app.synth()
+```
+
+---
+
+### 3. GitHub Actions（選択肢その①・全部 GitHub 側で完結）
+
+`.github/workflows/cdk-ci.yml`
+
+```yaml
+name: CDK CI
+on: [push]
+
+permissions:
+  id-token: write   # OIDC 用
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      - run: npm install -g aws-cdk      # CDK CLI を DL
+      - run: pip install -r requirements.txt
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111111111111:role/GhOidcRole
+          aws-region: ap-northeast-1
+
+      - run: cdk synth
+      - run: cdk deploy --all --require-approval never
+```
+
+* OIDC ロールを 2 アカウント分（111…, 222…）用意し、環境変数で切替も可。
+* 「自動生成版」が欲しければ `cdklabs/cdk-pipelines-github` を使うと Pipeline と Actions が CDK から一気に生成できます。([GitHub][2], [GitHub][3])
+
+---
+
+### 4. CDK Pipelines（選択肢その②・AWS 内に CodePipeline を構築）
+
+`pipeline_stack.py` で **`CodePipelineSource.git_hub()`** を使うだけで、
+GitHub Push → CodeBuild (Unit Test/Synth) → Dev Deploy → Test Deploy のフローが完成。
+仕組みの流れとブートストラップ手順は公式ガイドが詳しいです。([AWS ドキュメント][4], [AWS ドキュメント][5])
+
+---
+
+### 5. セットアップ手順
+
+| ステップ                                 | コマンド / 操作                                                                                                                                      |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. 2 アカウントを Bootstrap**            | `bash\n# dev 環境用\ncdk bootstrap aws://111111111111/ap-northeast-1\n# test 環境用\ncdk bootstrap aws://222222222222/us-east-1\n` ([AWS ドキュメント][4]) |
+| **2. GitHub ↔ CodeStar Connections** | AWS Console → *Developer Tools → Connections* で GitHub と一度だけ接続。ARN を `connection_arn` に貼付                                                      |
+| **3. 初回デプロイ**                        | `bash\ncdk deploy CdkGhPipeline --require-approval never\n`                                                                                    |
+| **4. 動作確認**                          | `git push` → Pipeline が自動で Dev → Test に S3 バケットを複製                                                                                             |
+
+> **最小テスト**目的なら、Stack 内のリソースは **S3 バケット１個**で十分です。
+> コードを変更して再プッシュ → 両環境で **`cdk diff`** がゼロになることを確認すれば“同一コードが他環境でも動く”ことを検証できます。
+
+---
+
+### 6. 使い分けの目安
+
+| パターン                             | こんな時                         | メリット                                                  |
+| -------------------------------- | ---------------------------- | ----------------------------------------------------- |
+| **GitHub Actions 単体**            | まずは簡単に“CDK を CLI で叩くだけ”を試したい | YAML 1 本で済む／OIDC でキー不要 ([GitHub][2], [AWS ドキュメント][4]) |
+| **CDK Pipelines (CodePipeline)** | 将来マルチステージ・マルチアカウントを本番運用      | パイプライン自体も CDK 管理。自己変異・自己更新が楽。([AWS ドキュメント][5])        |
+
+---
+
+## まとめ
+
+* **Stage** と **Environment** を使えば「同じ CDK コードを別アカウント／リージョンへ複製」できる。
+* **最小リソース Stack + Pipeline Stack** を GitHub に置き、*bootstrap → deploy* で即テスト可能。
+* GitHub Actions or CDK Pipelines、どちらも **`npm install -g aws-cdk`** で CLI をその場ダウンロードして動く仕組み。([GitHub][6])
+
+これで「CDK ↔ GitHub CI/CD の最小テスト」環境が作れます。まずは S3 1 個で動かし、Pipeline が dev → test 両環境へ無事デプロイされることを確認してみてください。
+
+[1]: https://docs.aws.amazon.com/cdk/v2/guide/stages.html?utm_source=chatgpt.com "Introduction to AWS CDK stages"
+[2]: https://github.com/cdklabs/cdk-pipelines-github?utm_source=chatgpt.com "cdklabs/cdk-pipelines-github"
+[3]: https://github.com/eladb/cdk-pipelines-github-example?utm_source=chatgpt.com "eladb/cdk-pipelines-github-example: Test app for CDK ... - GitHub"
+[4]: https://docs.aws.amazon.com/cdk/v2/guide/cdk-pipeline.html?utm_source=chatgpt.com "Continuous integration and delivery (CI/CD) using CDK Pipelines"
+[5]: https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.pipelines/README.html?utm_source=chatgpt.com "CDK Pipelines — AWS Cloud Development Kit 2.205.0 documentation"
+[6]: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/pipelines/README.md?utm_source=chatgpt.com "CDK Pipelines - GitHub"

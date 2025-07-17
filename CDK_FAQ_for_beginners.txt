@@ -1,0 +1,429 @@
+# CDK CI/CDパイプライン よくある質問（FAQ）
+
+## 目次
+1. プロジェクト全体について
+2. ファイル構成について
+3. 環境分離について
+4. AWSアカウントについて
+5. 実装上の注意点
+6. Python仮想環境について
+7. デプロイ後の確認方法
+
+---
+
+## 1. プロジェクト全体について
+
+### Q1: このCDKプロジェクトは何をするものですか？
+A: AWS CDKを使ったCI/CDパイプラインの学習用サンプルプロジェクトです。
+   主な機能：
+   - GitHubにコードをpushすると自動でパイプラインが実行される
+   - Dev環境とTest環境に同じコードが順次デプロイされる
+   - S3バケットが各環境に自動作成される
+   - Infrastructure as Code（コードによるインフラ管理）の実践
+
+### Q2: CDKとは何ですか？
+A: AWS Cloud Development Kit の略で、プログラミング言語（Python、TypeScript等）を使って
+   AWSリソースを定義・管理できるツールです。
+   従来のCloudFormationテンプレート（JSON/YAML）の代わりに、
+   慣れ親しんだプログラミング言語でインフラを記述できます。
+
+---
+
+## 2. ファイル構成について
+
+### Q3: app.pyとは何ですか？
+A: CDKアプリケーションのメイン関数（エントリーポイント）です。
+   Javaのmain()メソッドのような役割で、CDKアプリケーション全体の起点となります。
+   `cdk deploy`や`cdk synth`を実行すると、このファイルが最初に実行されます。
+
+### Q4: pipeline_stack.pyとは何ですか？CDKとの関係は？
+A: CI/CDパイプライン自体をCDKコードで定義するファイルです。
+   役割：
+   - CodePipelineを作成してGitHub連携を設定
+   - ソースコード取得 → CDK Synth → デプロイの自動化フローを構築
+   - Dev環境 → Test環境への順次デプロイを制御
+   
+   CDKとの関係：
+   - CDKのStackクラスを継承してパイプライン用のStackを作成
+   - 「CDKアプリをデプロイするためのパイプラインを、CDK自体で作る」というメタ的な構造
+
+### Q5: my_app_stage.pyとは何ですか？
+A: 実際にデプロイするアプリケーション（AWSリソース）を定義するファイルです。
+   構成：
+   - MyAppStack: 実際のAWSリソース（S3バケット等）を定義
+   - MyAppStage: 環境単位（Dev、Test等）でStackをまとめる
+   
+   CDKの階層構造：
+   App → PipelineStack → MyAppStage → MyAppStack → AWSリソース
+
+---
+
+## 3. 環境分離について
+
+### Q6: なぜDevとTestで環境を分けるのですか？
+A: リスク管理と段階的デプロイのためです。
+   
+   メリット：
+   - 開発中の不安定なコードがいきなり本番に影響しない
+   - 問題があれば早い段階（Dev環境）で発見できる
+   - 各環境で異なる設定やテストが可能
+   
+   デプロイフロー：
+   GitHub Push → Dev環境 → 成功したらTest環境 → （本番環境）
+
+### Q7: Dev/Test環境を同じアカウント・同じリージョンにしたらどうなりますか？
+A: リソース名の衝突問題が発生します。
+   
+   問題例：
+   - CloudFormationスタック名が重複 → デプロイエラー
+   - S3バケット名が重複 → 作成エラー
+   
+   解決方法：
+   1. 異なるリージョンを使用（推奨）
+   2. 異なるAWSアカウントを使用
+   3. リソース名に環境名プレフィックスを付ける
+
+---
+
+## 4. AWSアカウントについて
+
+### Q8: AWSアカウントIDとは何ですか？
+A: AWS上でアカウントを一意に識別する12桁の数字です。
+   例：123456789012
+   
+   確認方法：
+   ```bash
+   aws sts get-caller-identity --query Account --output text
+   ```
+   
+   用途：
+   - リソースの所有権識別
+   - クロスアカウントアクセス制御
+   - リソース名の一意性確保
+
+### Q9: 環境ごとにアカウントを分ける意味は？
+A: セキュリティと管理の観点から重要です。
+   
+   パターン別比較：
+   
+   【同一アカウント・異なるリージョン】（初学者推奨）
+   - メリット：設定が簡単、コスト管理が楽
+   - デメリット：権限分離が限定的
+   
+   【異なるアカウント】（本番推奨）
+   - メリット：完全な権限分離、セキュリティ向上
+   - デメリット：設定が複雑、管理コスト高
+
+---
+
+## 5. 実装上の注意点
+
+### Q10: 初回セットアップで必要な作業は？
+A: 以下の手順が必要です：
+   
+   1. GitHubリポジトリ作成・コードpush
+   2. pipeline_stack.pyのリポジトリ名を実際の名前に変更
+   3. AWSアカウントIDを実際の値に変更
+   4. CodeStar Connectionsでリポジトリ連携設定
+   5. CDK Bootstrapの実行
+   6. 初回デプロイ実行
+
+### Q11: 学習目的で使う場合の推奨設定は？
+A: 以下の設定が最もシンプルです：
+   
+   ```python
+   # 同じアカウント・異なるリージョン
+   DEV = Environment(account="あなたのアカウントID", region="ap-northeast-1")   # 東京
+   TEST = Environment(account="あなたのアカウントID", region="us-east-1")       # バージニア
+   ```
+   
+   理由：
+   - 設定が最も簡単
+   - CDKマルチ環境デプロイの概念を学習できる
+   - コスト管理が楽
+
+### Q12: エラーが出た場合のよくある原因は？
+A: 以下を確認してください：
+   
+   1. Bootstrap未実行
+      エラー：「Need to perform AWS CDK bootstrap」
+      解決：`cdk bootstrap`を実行
+   
+   2. 権限不足
+      エラー：「AccessDenied」
+      解決：IAMロールの権限を確認
+   
+   3. Connection ARN未設定
+      エラー：「CodeStar connection not found」
+      解決：CodeStar Connectionsで接続を作成
+   
+   4. リソース名重複
+      エラー：「Stack already exists」
+      解決：環境名をリソース名に含める
+
+### Q13: CDK Bootstrapとは何ですか？なぜ必要ですか？
+A: CDK Bootstrapは、CDKを使ってデプロイする前にAWSアカウント/リージョンの環境を準備する必須の初期設定プロセスです。
+   
+   CDKの動作の仕組み：
+   Python CDKコード → cdk synth → CloudFormationテンプレート + アセット → cdk deploy → AWS環境にデプロイ
+   
+   必要な理由：
+   - CDKが生成するアセット（Lambda関数のコード、Dockerイメージ等）の保存場所が必要
+   - CloudFormationが安全にデプロイするためのIAMロールが必要
+   - CDKのバージョン管理のための仕組みが必要
+   
+   作成されるリソース：
+   1. S3バケット：ファイルアセットを保存
+   2. ECRリポジトリ：Dockerイメージを保存
+   3. IAMロール：デプロイ、ファイルアップロード等の権限管理（5つのロール）
+   4. SSMパラメータ：Bootstrapバージョン管理
+   
+   実行方法：
+   ```bash
+   # 基本的な実行
+   cdk bootstrap
+   
+   # 特定のアカウント・リージョンを指定
+   cdk bootstrap aws://123456789012/ap-northeast-1
+   ```
+   
+   実行タイミング：
+   - アカウント・リージョンの組み合わせごとに初回のみ
+   - 複数実行しても問題なし
+   - 未実行でcdk deployするとエラーになる
+
+### Q14: Bootstrap済みかどうかはどうやって確認できますか？
+A: 以下の方法で確認できます：
+   
+   ```bash
+   # CloudFormationスタック一覧を確認
+   aws cloudformation list-stacks --query "StackSummaries[?StackName=='CDKToolkit'].StackStatus" --output table
+   
+   # S3バケット一覧を確認
+   aws s3 ls | grep cdk
+   
+   # アカウントIDを確認
+   aws sts get-caller-identity --query Account --output text
+   ```
+   
+   Bootstrap未実行時のエラー例：
+   ```
+   Error: SSM parameter /cdk-bootstrap/hnb659fds/version not found. 
+   Has the environment been bootstrapped? Please run 'cdk bootstrap'
+   ```
+
+---
+
+## 6. 次のステップ
+
+### Q15: 基本的な動作確認後、どう発展させれば良いですか？
+A: 以下の順序で機能を追加していくことをお勧めします：
+   
+   1. my_app_stage.pyにLambda関数、DynamoDBテーブルを追加
+   2. パイプラインにユニットテスト、統合テストを組み込み
+   3. IAMロールの最小権限設定
+   4. CloudWatch、X-Rayによる監視追加
+   5. 本番環境の追加、承認プロセスの組み込み
+
+### Q16: 実際の業務でCDKを使う場合の注意点は？
+A: 以下の点に注意してください：
+   
+   - セキュリティ：最小権限の原則を適用
+   - コスト管理：不要なリソースの自動削除設定
+   - 監視：CloudWatchによるログ・メトリクス収集
+   - バックアップ：重要なデータの定期バックアップ
+   - ドキュメント：コードコメントとREADMEの充実
+
+---
+
+## 6. Python仮想環境について
+
+### Q17: Python仮想環境とは何ですか？なぜCDKプロジェクトで必要ですか？
+A: Python仮想環境（Virtual Environment）は、プロジェクト固有のPython依存関係を分離して管理する仕組みです。
+   
+   必要な理由：
+   - システム全体のPython環境を汚染しない
+   - プロジェクトごとに異なるパッケージバージョンを管理
+   - 他の開発者と同じ環境を再現可能
+   - パッケージ依存関係の競合を防ぐ
+   
+   CDKプロジェクトでの設定：
+   ```bash
+   # 仮想環境作成
+   python -m venv .venv
+   
+   # 有効化（macOS/Linux）
+   source .venv/bin/activate
+   
+   # 有効化（Windows）
+   .venv\Scripts\activate
+   
+   # 依存関係インストール
+   (.venv) $ pip install -r requirements.txt
+   ```
+
+### Q18: 仮想環境の設定はCDKデプロイに影響しますか？AWSに仮想環境の情報も送信されますか？
+A: いいえ、仮想環境の情報はCDKデプロイには全く影響しません。
+   
+   CDKの動作フロー：
+   ```
+   【開発環境（ローカル）】
+   Python仮想環境 (.venv/) 
+       ↓ CDKコード実行
+   CloudFormationテンプレート生成
+       ↓ AWSへ送信
+   【AWS環境】
+   AWSリソース作成（S3バケット等）
+   ```
+   
+   仮想環境が影響しない理由：
+   - 現在のプロジェクトは単純なS3バケット作成のみ
+   - 設定値は固定（バケット名、削除ポリシーなど）
+   - 仮想環境は開発ツールとしてのPython環境管理のみ
+   
+   例外的なケース（このプロジェクトでは該当しない）：
+   - Lambdaファンクション：Pythonコードをパッケージングする場合
+   - Docker Assets：コンテナイメージをビルドする場合
+
+### Q19: "ModuleNotFoundError: No module named 'aws_cdk'"が出た場合の対処方法は？
+A: 仮想環境が有効化されていない、または依存関係がインストールされていないことが原因です。
+   
+   解決手順：
+   ```bash
+   # 1. 仮想環境を有効化
+   source .venv/bin/activate  # macOS/Linux
+   # または
+   .venv\Scripts\activate     # Windows
+   
+   # 2. 仮想環境が有効化されているか確認
+   (.venv) $ which python
+   # /your/path/my-cdk-app/.venv/bin/python
+   
+   # 3. 依存関係を再インストール
+   (.venv) $ pip install --upgrade pip
+   (.venv) $ pip install -r requirements.txt
+   
+   # 4. CDKが使用可能か確認
+   (.venv) $ python -c "import aws_cdk; print('CDK installed successfully')"
+   ```
+
+---
+
+## 7. デプロイ後の確認方法
+
+### Q20: CDKデプロイが成功したかどうかはどう確認しますか？
+A: コマンドライン出力とAWS Consoleの両方で確認できます。
+   
+   成功時のコマンドライン出力：
+   ```bash
+   (.venv) $ cdk deploy CdkGhPipeline --require-approval never
+   
+   ✅  CdkGhPipeline
+   
+   ✨  Deployment time: 156.78s
+   
+   Outputs:
+   CdkGhPipeline.PipelineName = CdkGhPipeline-Pipeline-AbCdEfGhIjKl
+   Stack ARN:
+   arn:aws:cloudformation:ap-northeast-1:123456789012:stack/CdkGhPipeline/12345678-abcd-1234-abcd-123456789012
+   
+   ✨  Total time: 162.45s
+   ```
+   
+   成功のサイン：
+   - `✅ CdkGhPipeline` の表示
+   - `Outputs:` でPipeline名が表示される
+   - エラーメッセージが出ていない
+   - 所要時間は通常5-10分程度
+
+### Q21: AWS Consoleでの確認すべきポイントは？
+A: 以下の3つのサービスを順次確認してください：
+   
+   1. **CodePipeline**：
+      - パイプライン一覧で `CdkGhPipeline-Pipeline-xxxxx` を確認
+      - Status が `Succeeded` または各ステージの進行状況を確認
+      - 失敗時は Details → View in CodeBuild でログ確認
+   
+   2. **CloudFormation**：
+      ```
+      ├── CdkGhPipeline                    # パイプライン本体
+      ├── MyApp-Dev-DevAppStack            # Dev環境のアプリスタック
+      └── MyApp-Test-TestAppStack          # Test環境のアプリスタック
+      ```
+      - 各スタックのStatusが `CREATE_COMPLETE` または `UPDATE_COMPLETE`
+   
+   3. **S3**：
+      ```
+      my-cdk-app-dev-123456789012     # Dev環境用バケット
+      my-cdk-app-test-123456789012    # Test環境用バケット
+      ```
+      - バケット名に環境名とアカウントIDが含まれることを確認
+
+### Q22: AWS CLIでの確認方法は？
+A: 以下のコマンドで詳細を確認できます：
+   
+   ```bash
+   # 現在のAWSアカウントID確認
+   aws sts get-caller-identity --query Account --output text
+   
+   # CloudFormationスタック一覧
+   aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE --query 'StackSummaries[?contains(StackName, `CdkGhPipeline`) || contains(StackName, `MyApp`)].{Name:StackName,Status:StackStatus}' --output table
+   
+   # S3バケット一覧（my-cdk-appで始まるもの）
+   aws s3 ls | grep my-cdk-app
+   
+   # 特定バケットの詳細確認
+   aws s3api get-bucket-location --bucket my-cdk-app-dev-123456789012
+   aws s3api get-bucket-versioning --bucket my-cdk-app-dev-123456789012
+   ```
+
+### Q23: 実際に作成されたS3バケットが動作しているかテストする方法は？
+A: 以下の手順でファイルのアップロード・ダウンロードテストができます：
+   
+   ```bash
+   # 1. テストファイル作成・アップロード
+   echo "Hello CDK!" > test.txt
+   aws s3 cp test.txt s3://my-cdk-app-dev-123456789012/
+   
+   # 2. ファイルが正常にアップロードされたか確認
+   aws s3 ls s3://my-cdk-app-dev-123456789012/
+   
+   # 3. ファイルダウンロード（確認）
+   aws s3 cp s3://my-cdk-app-dev-123456789012/test.txt downloaded-test.txt
+   cat downloaded-test.txt
+   # "Hello CDK!" が表示されれば成功
+   
+   # 4. テストファイル削除（クリーンアップ）
+   rm test.txt downloaded-test.txt
+   aws s3 rm s3://my-cdk-app-dev-123456789012/test.txt
+   ```
+   
+   期待される結果：
+   - ファイルアップロード成功
+   - ファイル一覧に test.txt が表示される
+   - ダウンロードしたファイルの内容が一致する
+
+### Q24: 継続的な運用で確認すべき項目は？
+A: 以下の項目を定期的に確認することをお勧めします：
+   
+   **定期確認項目**：
+   - **CodePipeline**: 新しいコミット後の自動実行状況
+   - **CloudWatch**: リソースの使用状況とエラーログ
+   - **AWS Config**: コンプライアンス状況（本番環境の場合）
+   
+   **コスト監視**：
+   ```bash
+   # 現在の月間推定コスト確認
+   aws ce get-dimension-values --dimension SERVICE --time-period Start=2024-01-01,End=2024-01-31
+   ```
+   
+   **セキュリティ確認**：
+   - IAMロールの最小権限設定
+   - S3バケットのパブリックアクセス設定
+   - CloudTrailによるAPI呼び出し監査
+
+---
+
+作成日：2024年
+対象：CDK初心者
+目的：よくある質問への回答集 

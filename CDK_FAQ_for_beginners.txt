@@ -5,9 +5,9 @@
 2. ファイル構成について
 3. 環境分離について
 4. AWSアカウントについて
-5. 実装上の注意点
-6. Python仮想環境について
-7. デプロイ後の確認方法
+5. 実装上の注意点（Q10-Q16、Q25-Q27）
+6. Python仮想環境について（Q17-Q19）
+7. デプロイ後の確認方法（Q20-Q24）
 
 ---
 
@@ -212,10 +212,6 @@ A: 以下の方法で確認できます：
    Has the environment been bootstrapped? Please run 'cdk bootstrap'
    ```
 
----
-
-## 6. 次のステップ
-
 ### Q15: 基本的な動作確認後、どう発展させれば良いですか？
 A: 以下の順序で機能を追加していくことをお勧めします：
    
@@ -233,6 +229,96 @@ A: 以下の点に注意してください：
    - 監視：CloudWatchによるログ・メトリクス収集
    - バックアップ：重要なデータの定期バックアップ
    - ドキュメント：コードコメントとREADMEの充実
+
+### Q25: CDKパイプラインを再ビルドしたい時はどうすればいいですか？
+A: CDK Pipelinesは「自己更新型」パイプラインのため、通常のローカル `cdk deploy` では**パイプライン管理下のリソースは更新されません**。
+
+   **推奨方法（GitHub経由）**：
+   ```bash
+   # 1. コードを修正
+   # 2. 変更をコミット
+   git add .
+   git commit -m "fix: エラーを修正"
+   
+   # 3. GitHubにプッシュ（パイプライン自動実行）
+   git push origin main
+   ```
+   
+   **手動実行方法（AWS Console）**：
+   1. AWS Console → CodePipeline を開く
+   2. パイプライン名（`CdkGhPipeline-Pipeline-xxxxx`）をクリック
+   3. **「Release change」**ボタンをクリック
+   
+   **CLI での手動実行**：
+   ```bash
+   aws codepipeline start-pipeline-execution --name CdkGhPipeline-Pipeline-xxxxx
+   ```
+
+### Q26: エラーを修正してcdk deployしても反映されないのはなぜですか？
+A: CDK Pipelinesの設計思想により、**パイプライン管理下のリソースはローカルからデプロイできません**。これは正常な動作です。
+
+   **リソースの管理区分**：
+   
+   | 更新方法 | 対象リソース | 使用場面 |
+   |---------|-------------|----------|
+   | **GitHub push** | Dev/Test環境のリソース | ✅ **通常の開発作業** |
+   | **Console手動実行** | Dev/Test環境のリソース | 🔧 **緊急時・テスト** |
+   | **ローカル `cdk deploy`** | パイプライン本体のみ | ⚠️ **パイプライン設定変更時のみ** |
+   
+   **現在のプロジェクト構成**：
+   ```
+   🏭 パイプライン本体 (PipelineStack) ← ローカル cdk deploy で更新可能
+   ├── 📋 パイプライン設定
+   ├── 🔄 ビルド手順
+   └── 🚀 デプロイターゲット
+       ├── Dev環境 (MyAppStage)    ← パイプライン管理下（GitHub経由のみ）
+       └── Test環境 (MyAppStage)   ← パイプライン管理下（GitHub経由のみ）
+   ```
+   
+   **理由**：
+   - GitOpsの原則：**GitHub がすべての変更の唯一の情報源**
+   - セキュリティ：本番環境への直接アクセスを防ぐ
+   - 管理性：変更履歴とレビュープロセスの一元化
+
+### Q27: どのような場合にローカルでcdk deployが必要ですか？
+A: **パイプライン本体の設定を変更する場合のみ**です。
+
+   **ローカル `cdk deploy` が必要な例**：
+   - pipeline_stack.py のパイプライン設定変更
+   - 新しい環境（Prod環境）の追加
+   - パイプラインのビルドコマンド変更
+   - GitHub リポジトリ名やブランチ名の変更
+   
+   **ローカル `cdk deploy` が不要な例**（GitHub経由で更新）：
+   - my_app_stage.py のS3バケット設定変更
+   - 新しいAWSリソース（Lambda、DynamoDB等）の追加
+   - 環境固有の設定値変更
+   - アプリケーションロジックの修正
+   
+   **実際の例**：
+   ```python
+   # pipeline_stack.py での変更 → ローカル cdk deploy が必要
+   pipeline.add_stage(MyAppStage(self, "Prod", "Prod", env=PROD))  # 新環境追加
+   
+   # my_app_stage.py での変更 → GitHub push で更新
+   bucket = s3.Bucket(self, "MyBucket", 
+       versioned=True  # バージョニング有効化
+   )
+   ```
+   
+   **正しい開発フロー**：
+   ```bash
+   # アプリケーション修正の場合（通常）
+   git add my_app_stage.py
+   git commit -m "feat: S3バケットにバージョニング追加"
+   git push origin main
+   
+   # パイプライン設定変更の場合（稀）
+   cdk deploy CdkGhPipeline --require-approval never
+   git add pipeline_stack.py
+   git commit -m "feat: Prod環境を追加"
+   git push origin main
+   ```
 
 ---
 

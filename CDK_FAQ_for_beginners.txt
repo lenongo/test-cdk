@@ -5,7 +5,7 @@
 2. ファイル構成について
 3. 環境分離について
 4. AWSアカウントについて
-5. 実装上の注意点（Q10-Q16、Q25-Q27）
+5. 実装上の注意点（Q10-Q16、Q25-Q32）
 6. Python仮想環境について（Q17-Q19）
 7. デプロイ後の確認方法（Q20-Q24）
 
@@ -393,6 +393,177 @@ A: 仮想環境が有効化されていない、または依存関係がイン�
    (.venv) $ python -c "import aws_cdk; print('CDK installed successfully')"
    ```
 
+### Q28: git pushしてもパイプラインが自動実行されない場合の原因と対処法は？
+A: 最も一般的な原因は**GitHub Webhook エラー**です。以下の順序で確認・対処してください。
+
+   **確認手順**：
+   1. **GitHub Webhook 状態確認**:
+      - GitHub → リポジトリ → Settings → Webhooks
+      - AWS CodePipeline用のWebhookに緑のチェックマークがあるか確認
+      - Recent Deliveries でエラー内容を確認
+   
+   2. **CodeStar Connections 状態確認**:
+      - AWS Console → Developer Tools → Settings → Connections
+      - Status が「Available」になっているか確認
+   
+   3. **パイプライン存在確認**:
+      - AWS Console → CodePipeline (リージョン: ap-northeast-1)
+      - `CdkGhPipeline-Pipeline-xxxxx` が存在するか確認
+   
+   **対処法（推奨順）**：
+   ```bash
+   # 1. パイプライン完全再作成（最も確実）
+   source .venv/bin/activate
+   cdk destroy CdkGhPipeline
+   cdk deploy CdkGhPipeline --require-approval never
+   
+   # 2. テスト用コミットで動作確認
+   echo "Webhook test - $(date)" >> webhook_test.txt
+   git add webhook_test.txt
+   git commit -m "test: Webhook修復後の動作確認"
+   git push origin main
+   ```
+
+### Q29: DevStageでPrepareとDeployの2段階に分かれているのはなぜですか？
+A: CDK Pipelinesが**CloudFormationのベストプラクティス**を自動化しているためです。
+
+   **2段階の役割**：
+   - **Prepare**: CloudFormation ChangeSet作成・事前検証
+   - **Deploy**: ChangeSet実行・実際のリソース作成
+   
+   **メリット**：
+   1. **安全性向上**: Prepare失敗時はDeploy実行されない
+   2. **デバッグ容易**: 段階別のエラー特定が可能
+   3. **ロールバック制御**: Deploy失敗時の安全な巻き戻し
+   
+   **実際の動作**：
+   ```
+   DevStage:
+   ├── Prepare: テンプレート生成・検証
+   │   └── 失敗 → Deploy実行されない
+   └── Deploy: 実際のAWSリソース作成
+       └── 失敗 → CloudFormationレベルでロールバック
+   ```
+   
+   **コードでの指定箇所**：
+   ```python
+   # pipeline_stack.py - この1行で2段階が自動生成される
+   pipeline.add_stage(MyAppStage(self, "Dev", "Dev", env=DEV))
+   ```
+
+### Q30: パイプラインを誤って削除してしまった場合の復旧方法は？
+A: **仮想環境の有効化**を忘れずに、CDKで再作成できます。
+
+   **復旧手順**：
+   ```bash
+   # 1. 仮想環境有効化（重要！）
+   source .venv/bin/activate
+   
+   # 2. 現在の状況確認
+   cdk list
+   aws cloudformation list-stacks | grep CdkGhPipeline
+   
+   # 3. パイプライン再作成
+   cdk deploy CdkGhPipeline --require-approval never
+   
+   # 4. 動作確認
+   echo "Pipeline restored - $(date)" >> restore_test.txt
+   git add restore_test.txt
+   git commit -m "test: パイプライン復旧後の動作確認"
+   git push origin main
+   ```
+   
+   **よくある問題**：
+   - `ModuleNotFoundError: No module named 'aws_cdk'` → 仮想環境未有効化
+   - `ValidationError: Artifact Bucket must have a KMS Key` → アカウントID設定ミス
+   
+   **完全復旧の確認**：
+   1. AWS Console → CodePipeline でパイプライン存在確認
+   2. GitHub → Settings → Webhooks で新しいWebhook作成確認
+   3. git pushでパイプライン自動実行確認
+
+### Q31: CDKでデプロイしたLambda関数（Pythonファイル）をAWS Console上で実行する方法は？
+A: Lambda Console から直接実行・テストできます。
+
+   **実行手順**：
+   1. **AWS Console** → **Lambda**
+   2. 関数一覧から対象関数を選択：
+      - `Dev-DevAppStack-MyPythonFunction-xxxxx`
+      - `Test-TestAppStack-MyPythonFunction-xxxxx`
+   3. **「Test」タブ**をクリック
+   4. **「Create new test event」**で新しいテストイベント作成（初回のみ）
+   5. **「Test」ボタン**をクリック → **即座に実行結果表示**
+   
+   **実行結果例**：
+   ```json
+   {
+     "statusCode": 200,
+     "body": {
+       "message": "Python function executed successfully in dev!",
+       "bucket": "my-cdk-app-dev-357178285063",
+       "objects_in_bucket": ["lambda-execution-dev.txt"],
+       "execution_id": "12345678-1234-1234-1234-123456789012"
+     }
+   }
+   ```
+   
+   **Lambda関数の機能**：
+   - ✅ S3バケットにファイル作成
+   - ✅ バケット内オブジェクト一覧取得
+   - ✅ 環境変数の取得・利用
+   - ✅ 実行ログの出力
+   
+   **ログ確認**：
+   - **CloudWatch Logs** で詳細な実行ログを確認可能
+   - エラー時のデバッグ情報も表示
+
+### Q32: 本番環境で大量のLambda関数を管理する場合のベストプラクティスは？
+A: 現在の`from_inline`方式ではなく、**外部ファイル化**と**構造化**が必須です。
+
+   **現在の方式（学習用のみ）**：
+   ```python
+   # ❌ コードが直接埋め込み（非推奨）
+   code=lambda_.Code.from_inline("""
+   import json  # 70行のコードがCDKファイル内に...
+   """)
+   ```
+   
+   **本番推奨方式**：
+   ```
+   プロジェクト構造:
+   my-cdk-app/
+   ├── lambda/                    # Lambda関数のコード
+   │   ├── user-api/             # 機能別ディレクトリ
+   │   │   ├── handler.py        # メイン関数
+   │   │   ├── requirements.txt  # 依存関係
+   │   │   └── tests/           # ユニットテスト
+   │   ├── order-processor/      # 注文処理関数
+   │   └── common/              # 共通ライブラリ
+   │       ├── s3_utils.py      # S3操作共通関数
+   │       └── response_utils.py # レスポンス共通関数
+   ├── cdk/
+   │   ├── constructs/          # 再利用可能コンストラクト
+   │   └── stacks/             # 機能別スタック
+   ```
+   
+   **CDK側の実装**：
+   ```python
+   # ✅ 外部ファイルから読み込み
+   lambda_.Function(
+       self,
+       "UserApiFunction",
+       code=lambda_.Code.from_asset("lambda/user-api"),
+       handler="handler.handler"
+   )
+   ```
+   
+   **メリット**：
+   - ✅ コードの再利用性向上
+   - ✅ ユニットテスト実装容易
+   - ✅ チーム開発対応
+   - ✅ CI/CD パイプライン統合
+   - ✅ デバッグ・保守性向上
+
 ---
 
 ## 7. デプロイ後の確認方法
@@ -510,6 +681,5 @@ A: 以下の項目を定期的に確認することをお勧めします：
 
 ---
 
-作成日：2024年
 対象：CDK初心者
 目的：よくある質問への回答集 

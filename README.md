@@ -214,7 +214,7 @@ npm install -g aws-cdk
 cdk --version
 
 # パイプライン デプロイ
-(.venv) $ c
+(.venv) $ cdk deploy CdkGhPipeline --require-approval never
 ```
 
 **💡 ヒント**:

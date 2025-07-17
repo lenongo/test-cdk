@@ -19,7 +19,7 @@ class PipelineStack(Stack):
                 input=CodePipelineSource.connection(
                     "lenongo/test-cdk",       # GitHub repo
                     "main",
-                    connection_arn="arn:aws:codeconnections:ap-northeast-1:357178285063:connection/7c1fa0d0-decf-40ef-b985-900d0789df0a"
+                    connection_arn="arn:aws:codeconnections:ap-northeast-1:357178285063:connection/125c95dc-7a8a-4102-aa7e-a9934c65ac4f"
                 ),
                 commands=[
                     "npm install -g aws-cdk",   # CodeBuild 内で CDK CLI DL

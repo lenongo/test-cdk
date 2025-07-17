@@ -34,5 +34,8 @@ Thumbs.db
 .aws/
 *.pem
 
+# 環境変数ファイル
+.env
+
 # ログファイル
 *.log 

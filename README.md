@@ -47,6 +47,19 @@ my-cdk-app/
 - Node.js 18 以上
 - Git
 
+### 環境変数の設定
+
+このプロジェクトをフォークして使用する場合は、以下の環境変数を設定してください：
+
+```bash
+export CDK_DEFAULT_ACCOUNT="your-aws-account-id"        # 必須：あなたのAWSアカウントID
+export CDK_DEFAULT_REGION="ap-northeast-1"              # オプション：デフォルトリージョン
+export GITHUB_REPO="your-username/your-repo"            # 必須：あなたのGitHubリポジトリ
+export CODECONNECTION_ARN="arn:aws:codeconnections:..."  # 必須：CodeConnection ARN
+```
+
+**重要**: 本番環境では環境変数や AWS Systems Manager Parameter Store を使用してセンシティブな情報を管理してください。
+
 ### 0. Python 仮想環境設定（重要）
 
 CDK プロジェクトを開始する前に、Python の仮想環境を設定することを強く推奨します。これにより、プロジェクト固有の依存関係を分離し、システム全体の Python 環境を汚染することを防げます。
